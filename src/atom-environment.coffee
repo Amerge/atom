@@ -894,50 +894,7 @@ class AtomEnvironment extends Model
 
   addProjectFolder: ->
     @pickFolder (selectedPaths = []) =>
-      @addToProject(selectedPaths)
-
-  addToProject: (projectPaths) ->
-    @loadState(@getStateKey(projectPaths)).then (state) =>
-      if state and @project.getPaths().length is 0
-        @attemptRestoreProjectStateForPaths(state, projectPaths)
-      else
-        @project.addPath(folder) for folder in projectPaths
-
-  attemptRestoreProjectStateForPaths: (state, projectPaths, filesToOpen = []) ->
-    paneItemIsEmptyUnnamedTextEditor = (item) ->
-      return false unless item instanceof TextEditor
-      return false if item.getPath() or item.isModified()
-      true
-
-    windowIsUnused = @workspace.getPaneItems().every(paneItemIsEmptyUnnamedTextEditor)
-    if windowIsUnused
-      @restoreStateIntoThisEnvironment(state)
-      @workspace.open(file) for file in filesToOpen
-    else
-      nouns = if projectPaths.length is 1 then 'folder' else 'folders'
-      btn = @confirm
-        message: 'Previous automatically-saved project state detected'
-        detailedMessage: "There is previously saved state for the selected #{nouns}. " +
-          "Would you like to add the #{nouns} to this window, permanently discarding the saved state, " +
-          "or open the #{nouns} in a new window, restoring the saved state?"
-        buttons: [
-          'Open in new window and recover state'
-          'Add to this window and discard state'
-        ]
-      if btn is 0
-        @open
-          pathsToOpen: projectPaths.concat(filesToOpen)
-          newWindow: true
-          devMode: @inDevMode()
-          safeMode: @inSafeMode()
-      else if btn is 1
-        @project.addPath(selectedPath) for selectedPath in projectPaths
-        @workspace.open(file) for file in filesToOpen
-
-  restoreStateIntoThisEnvironment: (state) ->
-    state.fullScreen = @isFullScreen()
-    pane.destroy() for pane in @workspace.getPanes()
-    @deserialize(state)
+      @project.addPath(selectedPath) for selectedPath in selectedPaths
 
   showSaveDialog: (callback) ->
     callback(@showSaveDialogSync())
@@ -945,12 +902,12 @@ class AtomEnvironment extends Model
   showSaveDialogSync: (options={}) ->
     @applicationDelegate.showSaveDialog(options)
 
-  saveState: (options, storageKey) ->
+  saveState: (options) ->
     new Promise (resolve, reject) =>
       if @enablePersistence and @project
         state = @serialize(options)
         savePromise =
-          if storageKey ?= @getStateKey(@project?.getPaths())
+          if storageKey = @getStateKey(@project?.getPaths())
             @stateStore.save(storageKey, state)
           else
             @applicationDelegate.setTemporaryWindowState(state)
@@ -958,9 +915,9 @@ class AtomEnvironment extends Model
       else
         resolve()
 
-  loadState: (stateKey) ->
+  loadState: ->
     if @enablePersistence
-      if stateKey ?= @getStateKey(@getLoadSettings().initialPaths)
+      if stateKey = @getStateKey(@getLoadSettings().initialPaths)
         @stateStore.load(stateKey).then (state) =>
           if state
             state
@@ -1047,38 +1004,19 @@ class AtomEnvironment extends Model
   openLocations: (locations) ->
     needsProjectPaths = @project?.getPaths().length is 0
 
-    foldersToAddToProject = []
-    fileLocationsToOpen = []
-
-    pushFolderToOpen = (folder) ->
-      if folder not in foldersToAddToProject
-        foldersToAddToProject.push(folder)
-
     for {pathToOpen, initialLine, initialColumn, forceAddToWindow} in locations
       if pathToOpen? and (needsProjectPaths or forceAddToWindow)
         if fs.existsSync(pathToOpen)
-          pushFolderToOpen @project.getDirectoryForProjectPath(pathToOpen).getPath()
+          @project.addPath(pathToOpen)
         else if fs.existsSync(path.dirname(pathToOpen))
-          pushFolderToOpen @project.getDirectoryForProjectPath(path.dirname(pathToOpen)).getPath()
+          @project.addPath(path.dirname(pathToOpen))
         else
-          pushFolderToOpen @project.getDirectoryForProjectPath(pathToOpen).getPath()
+          @project.addPath(pathToOpen)
 
       unless fs.isDirectorySync(pathToOpen)
-        fileLocationsToOpen.push({pathToOpen, initialLine, initialColumn})
-
-    if foldersToAddToProject.length > 0
-      @loadState(@getStateKey(foldersToAddToProject)).then (state) =>
-        if state and needsProjectPaths # only load state if this is the first path added to the project
-          files = (location.pathToOpen for location in fileLocationsToOpen)
-          @attemptRestoreProjectStateForPaths(state, foldersToAddToProject, files)
-        else
-          @project.addPath(folder) for folder in foldersToAddToProject
-          for {pathToOpen, initialLine, initialColumn} in fileLocationsToOpen
-            @workspace?.open(pathToOpen, {initialLine, initialColumn})
-    else
-      for {pathToOpen, initialLine, initialColumn} in fileLocationsToOpen
         @workspace?.open(pathToOpen, {initialLine, initialColumn})
-      Promise.resolve(null)
+
+    return
 
   resolveProxy: (url) ->
     return new Promise (resolve, reject) =>
